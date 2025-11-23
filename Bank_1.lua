@@ -1,7 +1,17 @@
 print("startup...")
 mainPath = "Bank"
-configName = "config.txt"
+configName = "testconfig.txt"
+configUrl = "https://raw.githubusercontent.com/AntonBolte/CC-Bank-System/refs/heads/main/config.txt"
 
+function download(url, filePath)
+  local content = http.get(url).readAll()
+  if not content then
+    error("[ERROR] could not connect to website!")
+  end
+  file = fs.open(filePath, "w")
+  file.write(content)
+  file.close()
+end
 
 if fs.exists(mainPath) == false
     then print("[WARN] directory '" .. mainPath .. "' could not me found in Root!")
@@ -12,11 +22,7 @@ if fs.exists(mainPath) == false
 
 if fs.exists(mainPath .. "/" .. configName) == false
     then print("[WARN] config file could not be found at:\n'" .. mainPath .. "/" .. configName .. "' !")
-         local file = fs.open(mainPath .. "/" .. configName , "w")
-            file.write("This is a Test")
-            file.close()
+         download(configUrl , mainPath .. "/" .. configName)
          print("[INFO] file '" .. mainPath .. "/" .. configName .. "' was created")
     else print("[INFO] file '" .. mainPath .. "/" .. configName .. "' exists already")
     end
-
-    
