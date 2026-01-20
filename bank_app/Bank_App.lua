@@ -1,131 +1,150 @@
 --checks for basalt, installs if not found
-if not fs.exists("basalt") then
+if not fs.exists("basalt.lua") then
   shell.run("wget run https://raw.githubusercontent.com/Pyroxenium/Basalt2/main/install.lua -f")
 end
-
 local basalt = require("basalt")
 
--- Centralized theme definitions
-local themes = {
-  dark = {
-    bg = colors.black,
-    box = colors.gray,
-    input = colors.lightGray,
-    text = colors.white,
-    palette = {
-      gray = {0.106, 0.106, 0.122}, -- #1b1b1f
-      lightGray = {0.25, 0.25, 0.25}
-    }
-  },
-  light = {
-    bg = colors.lightGray,   -- page background (very light)
-    box = colors.white,      -- box sits on top of bg
-    input = colors.lightGray, -- inputs slightly darker than box
-    text = colors.lightGray, -- subtle text in light mode
-    palette = {
-      gray = {0.8, 0.8, 0.8},
-      lightGray = {0.95, 0.95, 0.95}
-    }
-  }
-}
+--definitions (these need to be the same as in the server)
+local bankHostname = "bank_server"
+local loginProtocol = bankHostname .. "_login"
 
--- Theme state
-local isDarkMode = true
-local current = themes.dark
-
--- Main Frame
-local main = basalt.getMainFrame()
-
---Log.setEnabled()
---Log.setLogToFile()
-
--- Get screen dimensions
-local screenWidth, screenHeight = term.getSize()
-
--- Function to apply theme
-local function applyTheme()
-  current = isDarkMode and themes.dark or themes.light
-
-  -- set global background and palettes
-  main:setBackground(current.bg)
-  local g = current.palette.gray
-  term.setPaletteColor(colors.gray, g[1], g[2], g[3])
-  local lg = current.palette.lightGray
-  term.setPaletteColor(colors.lightGray, lg[1], lg[2], lg[3])
-
-  -- Update UI element colors (only if they exist)
-  if loginBox then loginBox:setBackground(current.box) end
-  if title then title:setBackground(current.box):setForeground(current.text) end
-  if usernameInput then usernameInput:setBackground(current.input):setForeground(current.text) end
-  if passwordInput then passwordInput:setBackground(current.input):setForeground(current.text) end
-  if loginButton then loginButton:setBackground(current.input):setForeground(current.text) end
-  if themeBtn then themeBtn:setBackground(current.box):setForeground(current.text) end
+local function Hash(str)
+  local h = 2166136261
+  for i = 1, #str do
+    h = bit32.bxor(h, str:byte(i))
+    h = (h * 16777619) % 2^32
+  end
+  return tostring(h)
 end
 
--- Box dimensions
-local boxWidth = 30
-local boxHeight = 12
-local boxX = math.floor((screenWidth - boxWidth) / 2) + 1
-local boxY = math.floor((screenHeight - boxHeight) / 2) + 1
 
--- Create a frame for the box
-local loginBox = main:addFrame()
-  :setPosition(boxX, boxY)
-  :setSize(boxWidth, boxHeight)
-  :setBackground(current.box)
+function RednetConnect()
+    if rednet.isOpen() then
+        return
+    end
 
--- Dark/Light mode switch (top-right)
-themeBtn = main:addButton()
-  :setText(isDarkMode and "☾" or "☀")
-  :setPosition(screenWidth - 3, 1)
-  :setSize(3, 1)
-  :setBackground(current.box)
-  :setForeground(current.text)
-  :onClick(function(self)
-    isDarkMode = not isDarkMode
-    self:setText(isDarkMode and "☾" or "☀")
-    applyTheme()
-  end)
+    local modemOpen = false
+    local modemSide = peripheral.find("modem")
 
--- Title (big font)
-local title = loginBox:addBigFont()
-  :setText("LOGIN")
-  :setPosition(3, 1)
-  :setBackground(current.box)
-  :setForeground(current.text)
+    if modemSide then
+        rednet.open(modemSide)
+        modemOpen = true
+        return "info: rednet opend"
+    else
+        return "error: no modem found"
+    end
+end
 
--- Username input
-local usernameInput = loginBox:addInput()
-  :setPosition(2, 4)
-  :setSize(26, 1)
-  :setPlaceholder("Username...")
-  :setBackground(current.input)
-  :setForeground(current.text)
+function DiscoverServer()
+    local serverID = rednet.lookup(loginProtocol, bankHostname)
+    if serverID then
+        return serverID
+    else
+        return "error: no server found"
+    end
+end
 
--- Password input
-local passwordInput = loginBox:addInput()
-  :setPosition(2, 6)
-  :setSize(26, 1)
-  :setPlaceholder("Password...")
-  :setReplaceChar("*")  -- Hides password
-  :setBackground(current.input)
-  :setForeground(current.text)
+function LoginPoke(username)
+    local rConnectResponse = RednetConnect()
+    if string.match(rConnectResponse, "error") then
+        return "error: error returned by function RednetConnect (" .. rConnectResponse .. ")"
+    end
 
--- Login button
-local loginButton = loginBox:addButton()
-  :setText("LOGIN")
-  :setPosition(12, 7)
-  :setSize(8, 1)
-  :setBackground(current.input)
-  :setForeground(current.text)
-  :onClick(function(self)
-    local username = usernameInput:getValue()
-    local password = passwordInput:getValue()
-    print("Username: " .. username)
-    print("Password: " .. password)
-  end)
+    local serverID = DiscoverServer()
+    if string.match(serverID, "error") then
+        return serverID
+    end
+    rednet.send(serverID, {type = "login_poke", username = username}, loginProtocol)
 
--- Apply initial theme
-applyTheme()
+    local incomingID, message, protocol = rednet.receive(loginProtocol, 5)
+    if not incomingID  == serverID then
+        return "error: wrong id responded"
+    end
+
+    if not message.status == "ok" then
+        return "error: server returned error status:" .. tostring(message.status)
+    end
+
+    return message
+end
+
+function LoginRequest(username, password)
+    local pokeAnswer = LoginPoke(username)
+    if string.match(pokeAnswer, "error") then
+        return "error: error returned by function LoginPoke (" .. pokeAnswer .. ")"
+    end
+
+    local serverID = DiscoverServer()
+    if string.match(serverID, "error") then
+        return "error: error returned by function DiscoverServer (" .. serverID .. ")"
+    end
+
+    --expects pokeAnswer to contain a nonce field
+    local payload = {
+        type = "login_request",
+        username = username,
+        proof = Hash(pokeAnswer.nonce .. Hash(password))
+    }
+
+    rednet.send(serverID, payload, loginProtocol)
+end
+
+
+RednetConnect()
+
+
+
+local screenWidth, screenHeight = term.getSize()
+
+local main = basalt.getMainFrame()
+
+local loginFrame = main:addFrame({
+    width = screenWidth,
+    height = screenHeight,
+    background = colors.black
+})
+
+local loginBox = loginFrame:addFrame({
+    width = 26 +1,
+    height = screenHeight +1,
+    background = colors.gray
+}):center()
+
+local usernameInput = loginBox:addInput({
+    width = 16,
+    x = 5,                             
+    y = 5,
+    background = colors.lightGray,
+    foreground = colors.white,
+    placeholder = "Username",
+    placeholderColor = colors.white
+})
+
+local passwordInput = loginBox:addInput({
+    width = 16,
+    x = 5,                             
+    y = 10,
+    background = colors.lightGray,
+    foreground = colors.white,
+    placeholder = "Password",
+    placeholderColor = colors.white,
+    replaceChar = "*"
+})
+
+local loginButton = loginBox:addButton({
+    width = 12,
+    x = 8,
+    y = 15,
+    background = colors.purple,
+    foreground = colors.white,
+    text = "Login",
+})
+
+loginButton:onClick(function(self)
+        local username = usernameInput:getText()
+        local password = passwordInput:getText()
+        self:setBackground(colors.lightGray)
+        self:setText("Logging in...")
+    end)
 
 basalt.run()

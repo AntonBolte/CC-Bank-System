@@ -1,69 +1,80 @@
--- Bank_1.lua
+local serverHostname = "bank_server"
+local loginProtocol = serverHostname .. "_login"
 
-function GetFileData(path)
-    local f = fs.open(path, "r")
-    if not f then
-        return nil
-    end
-    print("Getting data from " .. path)
-    local data = textutils.unserialize(f.readAll())
-    f.close()
-    return data
+local function Hash(str)
+  local h = 2166136261
+  for i = 1, #str do
+    h = bit32.bxor(h, str:byte(i))
+    h = (h * 16777619) % 2^32
+  end
+  return tostring(h)
 end
 
-function WriteFileData(path, data)
-    print("Writing data to " .. path)
-    local f = fs.open(path, "w")
-    f.write(textutils.serialize(data))
+function LoginPokeResponse(message)
+    local payload = {
+                type = "login_poke_response",
+                status = "ok",
+                nonce = math.random(100000, 999999)
+            }
+    local foundUser = fs.exists("Bank/User/" .. message.username)
+    if not foundUser then
+        print("[WARN] LoginPokeResponse: user " .. message.username .. " not found (returning error)")
+        return {type = "login_poke_response", status = "error", reason = "user not found"}
+    end
+    local f = fs.open("Bank/User/" .. message.username .. "/lastNonce.txt", "w+")
+    f.write(payload.nonce)
     f.close()
+    print("[INFO] poke response resolved with status: ok")
+    return payload
 end
 
-local commands = {
-    add = function(name, amount)
-        local data = GetFileData("Bank/Accounts/" .. name .. ".txt")
-        if not data then
-            return "Account does not exist"
-        end
-        data.Balance = data.Balance + tonumber(amount)
-        WriteFileData("Bank/Accounts/" .. name .. ".txt", data)
-        return "Added " .. amount .. " to " .. name .. "'s account."
-    end,
-    
-    create = function(name)
-        local data = { Name = name, Balance = 0 }
-        WriteFileData("Bank/Accounts/" .. name .. ".txt", data)
-        return "Created account for " .. name
-    end,
-    
-    balance = function(name)
-        local data = GetFileData("Bank/Accounts/" .. name .. ".txt")
-        if not data then
-            return "Account does not exist"
-        end
-        return name .. "'s balance: " .. data.Balance
-    end,
-    
-    remove = function(name, amount)
-        local data = GetFileData("Bank/Accounts/" .. name .. ".txt")
-        if not data then
-            return "Account does not exist"
-        end
-        if data.Balance < tonumber(amount) then
-            return "Insufficient funds"
-        end
-        data.Balance = data.Balance - tonumber(amount)
-        WriteFileData("Bank/Accounts/" .. name .. ".txt", data)
-        return "Withdrew " .. amount .. " from " .. name .. "'s account."
+function LoginRequestResponse(message)
+    local foundUser = fs.exists("Bank/User/" .. message.username)
+    if not foundUser then
+        print("[WARN] LoginRequestResponse: user " .. message.username .. " not found (returning error)")
+        return {status = "error", reason = "user not found"}
     end
-}
+    
+    local userFile = fs.open("Bank/User/" .. message.username .. "/password.txt", "r")
+    local storedHash = userFile.readLine()
+    userFile.close()
 
-print("Enter command (e.g., 'add Alice 100', 'create Bob', 'balance Alice'):")
-local input = io.read():match("^%s*(.-)%s*$")
-local action, name, amount = string.match(input, "(%a+)%s+(%a+)%s*(%-?%d*)")
+    local nonceFile = fs.open("Bank/User/" .. message.username .. "/lastNonce.txt", "r")
+    local lastNonce = nonceFile.readLine()
+    nonceFile.close()
 
-if commands[action] then
-    local result = commands[action](name, amount ~= "" and amount or nil)
-    print(result)
-else
-    print("Unknown action: " .. action)
+    if Hash(lastNonce .. storedHash) == message.proof then
+        return {status = "ok"}
+    else
+        return {status = "error", reason = "invalid credentials"}
+    end
+end
+
+while true do
+    local incomingID, message, protocol = rednet.receive()
+    print("[INFO] Received message from ID " .. tostring(incomingID) .. "type: " .. tostring(message.type))
+    if protocol == loginProtocol then
+        if message.type == "login_poke" then
+            local answer = LoginPokeResponse(message)
+            rednet.send(incomingID, answer, loginProtocol)
+            print("[INFO] Sent login poke response to ID " .. tostring(incomingID))
+
+
+        elseif message.type == "login_request" then
+            local foundUser = fs.exists("Bank/User/" .. message.username)
+            if not foundUser then
+                rednet.send(incomingID, {status = "error", reason = "user not found"}, loginProtocol)
+            else
+                local userFile = fs.open("Bank/User/" .. message.username .. "/password.txt", "r")
+                local storedHash = userFile.readLine()
+                userFile.close()
+
+                if storedHash == message.proof then
+                    rednet.send(incomingID, {status = "ok"}, loginProtocol)
+                else
+                    rednet.send(incomingID, {status = "error", reason = "invalid credentials"}, loginProtocol)
+                end
+            end
+        end
+    end
 end
