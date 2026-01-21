@@ -39,8 +39,9 @@ function LoginRequestResponse(message)
     local storedHash = userFile.readLine()
     userFile.close()
 
-    local nonceFile = fs.open("Bank/User/" .. message.username .. "/lastNonce.txt", "r")
+    local nonceFile = fs.open("Bank/User/" .. message.username .. "/lastNonce.txt", "a")
     local lastNonce = nonceFile.readLine()
+    nonceFile.delete()
     nonceFile.close()
 
     if Hash(lastNonce .. storedHash) == message.proof then
@@ -61,20 +62,11 @@ while true do
 
 
         elseif message.type == "login_request" then
-            local foundUser = fs.exists("Bank/User/" .. message.username)
-            if not foundUser then
-                rednet.send(incomingID, {status = "error", reason = "user not found"}, loginProtocol)
-            else
-                local userFile = fs.open("Bank/User/" .. message.username .. "/password.txt", "r")
-                local storedHash = userFile.readLine()
-                userFile.close()
-
-                if storedHash == message.proof then
-                    rednet.send(incomingID, {status = "ok"}, loginProtocol)
-                else
-                    rednet.send(incomingID, {status = "error", reason = "invalid credentials"}, loginProtocol)
-                end
-            end
+            local answer = LoginRequestResponse(message)
+            rednet.send(incomingID, answer, loginProtocol)
+            print("[INFO] Sent login request response to ID " .. tostring(incomingID))
+        else
+            print("[WARN] Unknown message type received: " .. tostring(message.type))
         end
     end
 end

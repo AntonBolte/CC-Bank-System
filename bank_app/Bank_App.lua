@@ -24,8 +24,8 @@ function RednetConnect()
     end
 
     local modemOpen = false
-    local modemSide = peripheral.find("modem")
-
+    local modemSide = peripheral.getNames("modem")[1]
+    print("opening modem on side: " .. modemSide)
     if modemSide then
         rednet.open(modemSide)
         modemOpen = true
@@ -87,6 +87,13 @@ function LoginRequest(username, password)
     }
 
     rednet.send(serverID, payload, loginProtocol)
+
+    local incomingID, message, protocol = rednet.receive(loginProtocol, 5)
+    if not incomingID  == serverID then
+        return "error: wrong id responded"
+    end
+
+    return message
 end
 
 
@@ -119,6 +126,10 @@ local usernameInput = loginBox:addInput({
     placeholder = "Username",
     placeholderColor = colors.white
 })
+usernameInput:onChange(function(self, pword)
+    print(pword)
+    local username = value
+end)
 
 local passwordInput = loginBox:addInput({
     width = 16,
@@ -130,6 +141,9 @@ local passwordInput = loginBox:addInput({
     placeholderColor = colors.white,
     replaceChar = "*"
 })
+passwordInput:onChange(function(self, uname)
+    local password = uname
+end)
 
 local loginButton = loginBox:addButton({
     width = 12,
@@ -141,10 +155,38 @@ local loginButton = loginBox:addButton({
 })
 
 loginButton:onClick(function(self)
-        local username = usernameInput:getText()
-        local password = passwordInput:getText()
+        if not password or username then
+            self:setBackground(colors.red)
+            self:setText("Fill all fields")
+            sleep(2)
+            self:setBackground(colors.purple)
+            self:setText("Login")
+            return
+        end
+
         self:setBackground(colors.lightGray)
         self:setText("Logging in...")
+
+        local loginResponse = LoginRequest(username, password)
+        if string.match(loginResponse, "error") then
+            self:setBackground(colors.red)
+            self:setText("Login Failed")
+            sleep(2)
+            self:setBackground(colors.purple)
+            self:setText("Login")
+        else
+            if loginResponse.status == "ok" then
+                self:setBackground(colors.green)
+                self:setText("Login Successful")
+                --proceed to next part of the app
+            else
+                self:setBackground(colors.red)
+                self:setText("Login Failed")
+                sleep(2)
+                self:setBackground(colors.purple)
+                self:setText("Login")
+            end
+        end
     end)
 
 basalt.run()
